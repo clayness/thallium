@@ -1,0 +1,285 @@
+smg
+
+const double P_LOOSE_DESTROY; // = 1.0
+const double P_LOOSE_DETECT ; // = 1.0
+const double P_TIGHT_DESTROY; // = 0.4
+const double P_TIGHT_DETECT ; // = 0.4
+
+const int MAX_LATENCY  ; // = 2;
+const int HORIZON      ; // = 10;
+const int INIT_A       ; // = 3;
+const int INIT_F       ; // = 0;
+const int INIT_L       ; // = 0;
+const int INIT_T       ; // = 0;
+const int MAX_ALTITUDE ; // = 3;
+const int RANGE_SENSOR ; // = 3;
+const int RANGE_THREAT ; // = 4;
+const int TOTAL_THREATS; // = 2;
+const int TOTAL_TARGETS; // = 6;
+
+//************************************************************************
+// CLOCK
+//************************************************************************
+const int CLK_TURN=0;
+const int ENV_TURN=1;
+const int SYS_TURN=2;
+const int RWD_TURN=3;
+const int END_TURN=4;
+
+global turn : [CLK_TURN..END_TURN] init CLK_TURN;
+
+// finish when we've reached the horizon
+label "final" = (clk_time=HORIZON) & turn=CLK_TURN;
+
+// clk: increments the clock time and advances to the "environment" turn
+module clk
+    clk_time : [0..HORIZON] init INIT_T;
+    [do_end] (turn=END_TURN) ->
+        1 : (turn'=CLK_TURN);
+    [do_clk] (turn=CLK_TURN) & (clk_time<HORIZON) -> 
+        1 : (clk_time'=clk_time+1) & (turn'=ENV_TURN);
+endmodule
+
+//************************************************************************
+// ENVIRONMENT
+//************************************************************************
+global has_target: bool init false;
+global has_threat: bool init false;
+
+// env: synchronizes the environment modules and advances to the "system" turn
+module env
+    [do_env] (turn=ENV_TURN) ->
+        1 : (turn'=SYS_TURN);
+endmodule
+
+// env_threats: determines whether the current segment has a threat
+module env_threats
+    threats_placed: [0..TOTAL_THREATS] init 0;
+    [do_env] (turn=ENV_TURN) & (HORIZON-clk_time<=TOTAL_THREATS-threats_placed) & (threats_placed<TOTAL_THREATS) ->
+        1 : (has_threat'=true) & (threats_placed'=(threats_placed+1));
+    [do_env] (turn=ENV_TURN) & (HORIZON-clk_time> TOTAL_THREATS-threats_placed) & (threats_placed<TOTAL_THREATS) ->
+        1 : (has_threat'=true) & (threats_placed'=(threats_placed+1));
+    [do_env] (turn=ENV_TURN) & (HORIZON-clk_time> TOTAL_THREATS-threats_placed) & (threats_placed<TOTAL_THREATS) ->
+        1 : (has_threat'=false);  
+    [do_env] (turn=ENV_TURN) & (threats_placed>=TOTAL_THREATS) ->
+        1 : (has_threat'=false);
+endmodule
+
+// env_targets: determins whether the current segment has a target for detection
+module env_targets
+    targets_placed: [0..TOTAL_TARGETS] init 0;
+    [do_env] (turn=ENV_TURN) & (HORIZON-clk_time<=TOTAL_TARGETS-targets_placed) & (targets_placed<TOTAL_TARGETS) ->
+        1 : (has_target'=true) & (targets_placed'=(targets_placed+1));
+    [do_env] (turn=ENV_TURN) & (HORIZON-clk_time> TOTAL_TARGETS-targets_placed) & (targets_placed<TOTAL_TARGETS) ->
+        1 : (has_target'=true) & (targets_placed'=(targets_placed+1));
+    [do_env] (turn=ENV_TURN) & (HORIZON-clk_time> TOTAL_TARGETS-targets_placed) & (targets_placed<TOTAL_TARGETS) ->
+        1 : (has_target'=false);
+    [do_env] (turn=ENV_TURN) & (targets_placed>=TOTAL_TARGETS) ->
+        1 : (has_target'=false);
+endmodule
+
+//************************************************************************
+// SYSTEM
+//************************************************************************
+const a_MIN=1; const a_MAX=MAX_ALTITUDE;
+
+// sys: synchronizes the system modules and advances the turn to the "reward" stage
+module sys
+    [do_sys] (turn=SYS_TURN) ->
+        1 : (turn'=RWD_TURN);
+endmodule
+
+// sys_altitude: non-deterministically chooses to increase, decrease, or hold altitude
+// and advances the progress if a change in altitude is underway
+const l_MAX=MAX_LATENCY;
+module sys_altitude
+    a : [a_MIN..a_MAX] init INIT_A;
+    a_progress : [-l_MAX..l_MAX] init INIT_L;
+
+    // keep the altitude the same, increase, or decrease
+    [do_sys] (turn=SYS_TURN) & (a_progress=0) ->
+        true;
+    [do_sys] (turn=SYS_TURN) & (a<a_MAX) & (a_progress=0) ->
+        1 : (a_progress'=( l_MAX));
+    [do_sys] (turn=SYS_TURN) & (a>a_MIN) & (a_progress=0) ->
+        1 : (a_progress'=(-l_MAX));
+
+    // progress
+    [do_sys] (turn=SYS_TURN) & (a<a_MAX) & (a_progress>1) ->
+	1 : (a_progress'=(a_progress-1));
+    [do_sys] (turn=SYS_TURN) & (a=a_MAX) & (a_progress>1) ->
+	1 : (a_progress'=0);
+    [do_sys] (turn=SYS_TURN) & (a>a_MIN) & (a_progress<(-1)) ->
+	1 : (a_progress'=(a_progress+1));
+    [do_sys] (turn=SYS_TURN) & (a=a_MIN) & (a_progress<(-1)) ->
+	1 : (a_progress'=0);
+
+    // finish
+    [do_sys] (turn=SYS_TURN) & (a<a_MAX) & (a_progress=1) ->
+        1 : (a_progress'=0) & (a'=(a+1));
+    [do_sys] (turn=SYS_TURN) & (a=a_MAX) & (a_progress=1) ->
+        1 : (a_progress'=0);
+    [do_sys] (turn=SYS_TURN) & (a>a_MIN) & (a_progress=(-1)) ->
+        1 : (a_progress'=0) & (a'=(a-1));
+    [do_sys] (turn=SYS_TURN) & (a=a_MIN) & (a_progress=(-1)) ->
+        1 : (a_progress'=0);
+endmodule
+
+// sys_formation: non-deterministically chooses to either change or retain formation
+module sys_formation
+    f : [0..1] init INIT_F;
+
+    // keep the formation the same, go tight, or go loose
+    [do_sys] (turn=SYS_TURN) ->
+        true;
+    [do_sys] (turn=SYS_TURN) & f=0 ->
+        1 : (f'=1);
+    [do_sys] (turn=SYS_TURN) & f=1 ->
+        1 : (f'=0);
+endmodule
+
+//************************************************************************
+// REWARD
+//************************************************************************
+formula P_SURVIVE = 1.0 - ((f=0?P_LOOSE_DESTROY:P_TIGHT_DESTROY) * max(0.0, ((RANGE_THREAT-(a-1))/RANGE_THREAT)));
+formula P_DETECT  = (f=0?P_LOOSE_DETECT :P_TIGHT_DETECT ) * max(0.0, ((RANGE_SENSOR-(a-1))/RANGE_SENSOR));
+
+formula P_REWARD1 = (P_SURVIVE*p_survived);
+formula P_REWARD2 =
+P_REWARD1>=99.5 ? 100 :
+P_REWARD1>=98.5 ?  99 :
+P_REWARD1>=97.5 ?  98 :
+P_REWARD1>=96.5 ?  97 :
+P_REWARD1>=95.5 ?  96 :
+P_REWARD1>=94.5 ?  95 :
+P_REWARD1>=93.5 ?  94 :
+P_REWARD1>=92.5 ?  93 :
+P_REWARD1>=91.5 ?  92 :
+P_REWARD1>=90.5 ?  91 :
+P_REWARD1>=89.5 ?  90 :
+P_REWARD1>=88.5 ?  89 :
+P_REWARD1>=87.5 ?  88 :
+P_REWARD1>=86.5 ?  87 :
+P_REWARD1>=85.5 ?  86 :
+P_REWARD1>=84.5 ?  85 :
+P_REWARD1>=83.5 ?  84 :
+P_REWARD1>=82.5 ?  83 :
+P_REWARD1>=81.5 ?  82 :
+P_REWARD1>=80.5 ?  81 :
+P_REWARD1>=79.5 ?  80 :
+P_REWARD1>=78.5 ?  79 :
+P_REWARD1>=77.5 ?  78 :
+P_REWARD1>=76.5 ?  77 :
+P_REWARD1>=75.5 ?  76 :
+P_REWARD1>=74.5 ?  75 :
+P_REWARD1>=73.5 ?  74 :
+P_REWARD1>=72.5 ?  73 :
+P_REWARD1>=71.5 ?  72 :
+P_REWARD1>=70.5 ?  71 :
+P_REWARD1>=69.5 ?  70 :
+P_REWARD1>=68.5 ?  69 :
+P_REWARD1>=67.5 ?  68 :
+P_REWARD1>=66.5 ?  67 :
+P_REWARD1>=65.5 ?  66 :
+P_REWARD1>=64.5 ?  65 :
+P_REWARD1>=63.5 ?  64 :
+P_REWARD1>=62.5 ?  63 :
+P_REWARD1>=61.5 ?  62 :
+P_REWARD1>=60.5 ?  61 :
+P_REWARD1>=59.5 ?  60 :
+P_REWARD1>=58.5 ?  59 :
+P_REWARD1>=57.5 ?  58 :
+P_REWARD1>=56.5 ?  57 :
+P_REWARD1>=55.5 ?  56 :
+P_REWARD1>=54.5 ?  55 :
+P_REWARD1>=53.5 ?  54 :
+P_REWARD1>=52.5 ?  53 :
+P_REWARD1>=51.5 ?  52 :
+P_REWARD1>=50.5 ?  51 :
+P_REWARD1>=49.5 ?  50 :
+P_REWARD1>=48.5 ?  49 :
+P_REWARD1>=47.5 ?  48 :
+P_REWARD1>=46.5 ?  47 :
+P_REWARD1>=45.5 ?  46 :
+P_REWARD1>=44.5 ?  45 :
+P_REWARD1>=43.5 ?  44 :
+P_REWARD1>=42.5 ?  43 :
+P_REWARD1>=41.5 ?  42 :
+P_REWARD1>=40.5 ?  41 :
+P_REWARD1>=39.5 ?  40 :
+P_REWARD1>=38.5 ?  39 :
+P_REWARD1>=37.5 ?  38 :
+P_REWARD1>=36.5 ?  37 :
+P_REWARD1>=35.5 ?  36 :
+P_REWARD1>=34.5 ?  35 :
+P_REWARD1>=33.5 ?  34 :
+P_REWARD1>=32.5 ?  33 :
+P_REWARD1>=31.5 ?  32 :
+P_REWARD1>=30.5 ?  31 :
+P_REWARD1>=29.5 ?  30 :
+P_REWARD1>=28.5 ?  29 :
+P_REWARD1>=27.5 ?  28 :
+P_REWARD1>=26.5 ?  27 :
+P_REWARD1>=25.5 ?  26 :
+P_REWARD1>=24.5 ?  25 :
+P_REWARD1>=23.5 ?  24 :
+P_REWARD1>=22.5 ?  23 :
+P_REWARD1>=21.5 ?  22 :
+P_REWARD1>=20.5 ?  21 :
+P_REWARD1>=19.5 ?  20 :
+P_REWARD1>=18.5 ?  19 :
+P_REWARD1>=17.5 ?  18 :
+P_REWARD1>=16.5 ?  17 :
+P_REWARD1>=15.5 ?  16 :
+P_REWARD1>=14.5 ?  15 :
+P_REWARD1>=13.5 ?  14 :
+P_REWARD1>=12.5 ?  13 :
+P_REWARD1>=11.5 ?  12 :
+P_REWARD1>=10.5 ?  11 :
+P_REWARD1>=09.5 ?  10 :
+P_REWARD1>=08.5 ?   9 :
+P_REWARD1>=07.5 ?   8 :
+P_REWARD1>=06.5 ?   7 :
+P_REWARD1>=05.5 ?   6 :
+P_REWARD1>=04.5 ?   5 :
+P_REWARD1>=03.5 ?   4 :
+P_REWARD1>=02.5 ?   3 :
+P_REWARD1>=01.5 ?   2 :
+P_REWARD1>=00.5 ?   1 :
+0;
+
+// rwd: synchronizes the reward modules and resets to the "end" turn (for the next step)
+module rwd
+    [do_rwd] (turn=RWD_TURN) ->
+        1 : (turn'=END_TURN);
+endmodule
+
+// rwd_threat: determines whether or not the threats destroyed the drones
+module rwd_threat
+    p_survived : [0..100] init 100;
+    [do_rwd] (turn=RWD_TURN) & ( has_threat) ->
+        (p_survived'=P_REWARD2);
+    [do_rwd] (turn=RWD_TURN) & (!has_threat) ->
+	true;
+endmodule
+
+// rwd_sensor: determines whether or not the drones detected a target
+module rwd_sensor
+    detected : bool init false;
+    [do_rwd] (turn=RWD_TURN) & ((!has_target) | (a >RANGE_SENSOR)) ->
+        (detected'=false);
+    [do_rwd] (turn=RWD_TURN) & (( has_target) & (a<=RANGE_SENSOR)) -> 
+        (detected'=true);
+    [do_rwd] (turn=RWD_TURN) & (( has_target) & (a<=RANGE_SENSOR)) -> 
+        (detected'=false);
+endmodule
+rewards "detected"
+    [do_end] (turn=END_TURN) & (detected) : 1;
+endrewards
+rewards "distance"
+    [do_end] (turn=END_TURN) & (clk_time=HORIZON) : p_survived;
+endrewards
+
+player drones sys, sys_altitude, sys_formation, [do_sys] endplayer
+player ground clk, env, env_threats, env_targets, [do_env], [do_clk], [do_end] endplayer
+player reward rwd, rwd_threat, rwd_sensor, [do_rwd] endplayer

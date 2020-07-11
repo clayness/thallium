@@ -1,0 +1,65 @@
+smg
+
+const int HORIZON=10;
+const int INIT_T=1;
+
+//************************************************************************
+// CLOCK
+//************************************************************************
+const int CLK_TURN=0;
+const int ENV_TURN=1;
+const int SYS_TURN=2;
+const int RWD_TURN=3;
+const int END_TURN=4;
+
+global turn : [CLK_TURN..END_TURN] init CLK_TURN;
+
+// finish when we've reached the horizon
+label "final" = (clk_time=HORIZON) & turn=CLK_TURN;
+
+// clk: increments the clock time and advances to the "environment" turn
+module clk
+    clk_time : [0..HORIZON] init INIT_T;
+    [do_end] (turn=END_TURN) ->
+        1 : (turn'=CLK_TURN);
+    [do_clk] (turn=CLK_TURN) & (clk_time<HORIZON) -> 
+        1 : (clk_time'=clk_time+1) & (turn'=ENV_TURN);
+endmodule
+
+//************************************************************************
+// ENVIRONMENT
+//************************************************************************
+
+// env: synchronizes the environment modules and advances to the "system" turn
+module env
+    [do_env] (turn=ENV_TURN) ->
+        1 : (turn'=SYS_TURN);
+endmodule
+
+//************************************************************************
+// SYSTEM
+//************************************************************************
+
+// sys: synchronizes the system modules and advances the turn to the "reward" stage
+module sys
+    [do_sys] (turn=SYS_TURN) ->
+        1 : (turn'=RWD_TURN);
+endmodule
+
+//************************************************************************
+// REWARD
+//************************************************************************
+
+// rwd: synchronizes the reward modules and resets to the "end" turn (for the next step)
+module rwd
+    [do_rwd] (turn=RWD_TURN) ->
+        1 : (turn'=END_TURN);
+endmodule
+rewards "test"
+    [do_end] (turn=END_TURN) : 1;
+endrewards
+
+player deltaiot sys, [do_sys] endplayer
+player network  clk, env, [do_env], [do_clk], [do_end] endplayer
+player reward   rwd, [do_rwd] endplayer
+

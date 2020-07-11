@@ -1,0 +1,203 @@
+smg
+
+const HORIZON                  ; // # time steps = 10
+const SECS_PER_STEP            ; // # secs per time step (tau) = 10
+const SERVICE_RATE             ; // # reqs that each server can handle per time step = 10
+const double DIMMER_ADJ        ; // multiplier applied to the service rate by the dimmer = 2.0
+const THRESHOLD                ; // threshold response time for rewards = THRESHOLD
+const double SRV_COST_PER_HOUR ; // cost (in dollars) for an hour of server time = 0.07
+
+const MAX_ARRIVAL_RATE         ;// max # reqs that can arrive per time step = 20
+const MAX_DIMMER               ;// max dimmer value (lowest utility) = 3
+const MAX_PROGRESS             ;// max "add server" tactic progress (latency) = 1
+const MAX_SERVERS              ;// max number of servers (lowest utility) = 6
+
+const MIN_DIMMER        =  1   ; // min dimmer value (highest utility)
+const MIN_SERVERS       =  1   ; // min number of servers (highest utility)
+
+const INIT_DIMMER     ;//= 1;
+const INIT_PROGRESS   ;//= 1;
+const INIT_SERVERS    ;//= 1;
+
+//----------------------------------------------------------------------------
+// BASIC STRUCTURE (players, turns, clock, etc.)
+//----------------------------------------------------------------------------
+
+player requests 
+    env_base, evolve, [do_env], clk_base, [do_clk], rwd_base, [do_rwd] 
+endplayer
+player web_site 
+    sys_base, sys_server, sys_dimmer, [do_sys]  
+endplayer
+
+const ENV_TURN=0;
+const SYS_TURN=1;
+const RWD_TURN=2;
+const CLK_TURN=3;
+
+global turn : [ENV_TURN..CLK_TURN] init ENV_TURN;
+
+module env_base
+    [do_env] (turn=ENV_TURN) ->
+        1 : (turn'=SYS_TURN);
+endmodule
+
+module sys_base
+    [do_sys] (turn=SYS_TURN) ->
+        1 : (turn'=RWD_TURN);
+endmodule
+
+module rwd_base 
+    [do_rwd] (turn=RWD_TURN) ->
+        (turn'=CLK_TURN);
+endmodule
+
+module clk_base
+    clk_time : [0..HORIZON] init 0;
+    [do_clk] (turn=CLK_TURN) & (clk_time<HORIZON) ->
+        (clk_time'=(clk_time+1)) & (turn'=ENV_TURN);
+    [do_clk] (turn=CLK_TURN) & (clk_time=HORIZON) ->
+        true;
+endmodule
+
+//----------------------------------------------------------------------------
+// ENVIRONMENT
+//----------------------------------------------------------------------------
+
+global local_arrivals : [0..MAX_ARRIVAL_RATE] init 0;
+module evolve
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'= 0);
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'= 1);
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'= 2);
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'= 3);
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'= 4);
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'= 5);
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'= 6);
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'= 7);
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'= 8);
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'= 9);
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'=10);
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'=11);
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'=12);
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'=13);
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'=14);
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'=15);
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'=16);
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'=17);
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'=18);
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'=19);
+    [do_env] (turn=ENV_TURN) -> (local_arrivals'=20);
+endmodule
+
+//----------------------------------------------------------------------------
+// SYSTEM (WEB SITE)
+//----------------------------------------------------------------------------
+
+module sys_dimmer
+
+    dimmer : [MIN_DIMMER..MAX_DIMMER] init INIT_DIMMER;
+
+    // skip; do nothing
+    [do_sys] (turn=SYS_TURN) ->
+        true;
+    // decrement the dimmer, down to the minimum
+    [do_sys] (turn=SYS_TURN) & (dimmer>MIN_DIMMER) ->
+        (dimmer'=dimmer-1);
+    // increment the dimmer, up to the maximum
+    [do_sys] (turn=SYS_TURN) & (dimmer<MAX_DIMMER) ->
+        (dimmer'=dimmer+1);
+endmodule
+
+module sys_server
+
+    num_servers : [MIN_SERVERS..MAX_SERVERS] init INIT_SERVERS;
+
+    progress    : [0..(MAX_PROGRESS-1)] init INIT_PROGRESS-1;
+
+    // skip; do nothing
+    [do_sys] (turn=SYS_TURN) & (progress=0) ->
+        true;
+    // remove a server
+    [do_sys] (turn=SYS_TURN) & (progress=0) & (num_servers>MIN_SERVERS) ->
+        (num_servers'=(num_servers-1));
+    // initiate the "add server" tactic
+    [do_sys] (turn=SYS_TURN) & (progress=0) & (num_servers<MAX_SERVERS) ->
+        (progress'=MAX_PROGRESS-1);
+    // advance the "add server" counter
+    [do_sys] (turn=SYS_TURN) & (progress>1) ->
+        (progress'=(progress-1));
+    // finish "add server" by fully enlisting the server
+    [do_sys] (turn=SYS_TURN) & (progress=1) ->
+        (num_servers'=(num_servers+1)) & (progress'=0);
+endmodule
+
+//----------------------------------------------------------------------------
+// REWARDS
+//----------------------------------------------------------------------------
+
+formula Mu          = (SERVICE_RATE*pow(DIMMER_ADJ,dimmer-MIN_DIMMER)); // higher dimmer -> higher service rate
+formula Lambda      = (local_arrivals);
+formula Rho         = (Lambda/Mu);
+formula P0          = (Rho=0?0:(1/(1+Rho+(pow(Rho,2)/(2*(1-(Rho/num_servers)))))));
+
+formula CFact       = 
+	// PRISM doesn't seem to have a factorial function, so
+        // this calculates (c-1)! for the M/M/c queue calculation
+        (num_servers=10?362880:
+        (num_servers= 9? 40320:    
+        (num_servers= 8?  5040:
+        (num_servers= 7?   720:
+        (num_servers= 6?   120:
+        (num_servers= 5?    24:
+        (num_servers= 4?     6:
+        (num_servers= 3?     2:
+        1))))))))
+        ;
+
+formula Lq          = (P0=0?0:(pow(Rho,num_servers+1)*P0)/(CFact*pow(num_servers-Rho,2)));
+formula Wq          = (Lq=0?0:(Lq/Lambda));
+formula ServiceTime = (Wq=0?0:floor((Wq+(1/Mu))*SECS_PER_STEP*1000)); // convert to milliseconds
+
+formula ProvisionedServers = (num_servers + (progress>0?1:0));
+
+rewards "uC"
+    (turn=RWD_TURN) & (ServiceTime < 0.0 | ServiceTime > THRESHOLD) :
+        1.0;
+    (turn=RWD_TURN) & (ServiceTime <= THRESHOLD) : 
+	ProvisionedServers*(SRV_COST_PER_HOUR/3600)*SECS_PER_STEP;
+endrewards
+
+rewards "uF"
+    (turn=RWD_TURN) & (ServiceTime < 0.0 | ServiceTime > THRESHOLD) :
+        0.0;
+    (turn=RWD_TURN) & (ServiceTime <= THRESHOLD) :
+	(-1)*pow(1.0/DIMMER_ADJ,dimmer-MIN_DIMMER)/HORIZON;
+endrewards
+
+rewards "uR"
+    (turn=RWD_TURN) & ((ServiceTime <  0.0) | (ProvisionedServers >  MAX_SERVERS)) :
+        (THRESHOLD * 2)/HORIZON;
+    (turn=RWD_TURN) & ((ServiceTime >= 0.0) & (ProvisionedServers <= MAX_SERVERS)) :
+	ServiceTime/HORIZON;
+endrewards
+
+formula MorenoUR_Calc = (ServiceTime >=    0.0 & ServiceTime <=  100.0) ? 1.00 :
+                        (ServiceTime >   100.0 & ServiceTime <=  200.0) ? 1.00 - (1.00-0.99) * (ServiceTime- 100.0) / ( 200.0- 100.0) :
+                        (ServiceTime >   200.0 & ServiceTime <=  500.0) ? 0.99 - (0.99-0.90) * (ServiceTime- 200.0) / ( 500.0- 200.0) :
+                        (ServiceTime >   500.0 & ServiceTime <= 1000.0) ? 0.90 - (0.90-0.75) * (ServiceTime- 500.0) / (1000.0- 500.0) :
+                        (ServiceTime >  1000.0 & ServiceTime <= 1500.0) ? 0.75 - (0.75-0.50) * (ServiceTime-1000.0) / (1500.0-1000.0) :
+                        (ServiceTime >  1500.0 & ServiceTime <= 2000.0) ? 0.50 - (0.50-0.25) * (ServiceTime-1500.0) / (2000.0-1500.0) :
+                        (ServiceTime >  2000.0 & ServiceTime <= 4000.0) ? 0.25 - (0.25-0.00) * (ServiceTime-2000.0) / (4000.0-2000.0) :
+                        0.0;
+
+formula MorenoUC_Calc = (num_servers <= 1) ? 1.0 :
+                        (num_servers <= 2) ? 0.9 :
+                        (num_servers <= 3) ? 0.3 :
+                        (num_servers <= 4) ? 0.1 : 
+                        0.0;
+
+formula MorenoUF_Calc = (dimmer = 1) ? 1.00 : 0.25;
+
+rewards "Moreno"
+    (turn=RWD_TURN) : SECS_PER_STEP*(0.6*MorenoUR_Calc+0.0*MorenoUF_Calc+0.4*MorenoUC_Calc);
+endrewards

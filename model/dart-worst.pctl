@@ -1,0 +1,2 @@
+<<drones>> R{"detected"}max=? [ Fc "final" ]
+<<drones>> R{"distance"}max=? [ Fc "final" ]
